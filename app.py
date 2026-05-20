@@ -12,8 +12,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from utils.articles import combine_articles_for_summary, separate_articles_by_paragraph
-from utils.cropper import ArticleCropError, crop_article_images_from_pdf
+from utils.cleaner import clean_text
+from utils.cropper import (
+    ArticleCropError,
+    crop_article_images_from_image,
+    crop_article_images_from_pdf,
+)
 from utils.extractor import PDFExtractionError, extract_text_from_pdf
+from utils.ocr import OCRProcessingError, extract_text_from_image
 from utils.summarizer import SummarizationError, summarize_newspaper
 from utils.tts import TTSError, generate_audio_summary
 
@@ -30,10 +36,14 @@ CROP_DIR.mkdir(exist_ok=True)
 
 SUPPORTED_LANGUAGES = {"gujarati", "hindi", "english"}
 SUPPORTED_SPEEDS = {"normal", "slow"}
+SUPPORTED_INPUT_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg"}
 
 app = FastAPI(
     title="Gujarati Newspaper Summarizer",
-    description="Upload a Gujarati newspaper PDF and receive a simple summary with audio.",
+    description=(
+        "Upload a Gujarati newspaper PDF or image and receive visual cutouts, "
+        "a simple summary, and audio."
+    ),
     version="1.0.0",
 )
 
@@ -47,21 +57,58 @@ app.add_middleware(
 
 
 def _save_upload(upload: UploadFile) -> Path:
-    """Persist the uploaded PDF inside uploads/ with a safe unique name."""
+    """Persist the uploaded PDF or newspaper image inside uploads/."""
     original_name = Path(upload.filename or "newspaper.pdf").name
-    if Path(original_name).suffix.lower() != ".pdf":
-        raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
+    extension = Path(original_name).suffix.lower()
+    if extension not in SUPPORTED_INPUT_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF, PNG, JPG, and JPEG files are accepted.",
+        )
 
-    saved_path = UPLOAD_DIR / f"{Path(original_name).stem}_{uuid4().hex[:8]}.pdf"
+    saved_path = UPLOAD_DIR / f"{Path(original_name).stem}_{uuid4().hex[:8]}{extension}"
     try:
         with saved_path.open("wb") as destination:
             shutil.copyfileobj(upload.file, destination)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail="Could not save uploaded PDF.") from exc
+        raise HTTPException(status_code=500, detail="Could not save uploaded file.") from exc
     finally:
         upload.file.close()
 
     return saved_path
+
+
+def _is_pdf(path: Path) -> bool:
+    return path.suffix.lower() == ".pdf"
+
+
+def _extract_text_for_upload(path: Path) -> tuple[str, str, int]:
+    """Extract text from either a PDF or direct newspaper image upload."""
+    if _is_pdf(path):
+        extraction = extract_text_from_pdf(path)
+        return extraction.text, extraction.method, extraction.page_count
+
+    try:
+        image_text = clean_text(extract_text_from_image(path))
+    except OCRProcessingError as exc:
+        raise PDFExtractionError(str(exc)) from exc
+
+    if not image_text:
+        raise PDFExtractionError("No readable Gujarati text was found in this image.")
+
+    return image_text, "paddleocr_image", 1
+
+
+def _crop_upload_images(path: Path) -> tuple[list[object], str | None]:
+    """Create visual article cutouts for PDFs or direct image uploads."""
+    try:
+        if _is_pdf(path):
+            crops = crop_article_images_from_pdf(path, CROP_DIR / path.stem)
+        else:
+            crops = crop_article_images_from_image(path, CROP_DIR / path.stem)
+        return crops, None
+    except ArticleCropError as exc:
+        return [], str(exc)
 
 
 @app.get("/health")
@@ -75,8 +122,9 @@ def summarize_pdf(
     file: UploadFile = File(...),
     target_language: str = Form("gujarati"),
     voice_speed: str = Form("normal"),
+    generate_summary: bool = Form(True),
 ) -> dict[str, object]:
-    """Process an uploaded Gujarati newspaper PDF end-to-end."""
+    """Process an uploaded Gujarati newspaper PDF or image end-to-end."""
     normalized_language = target_language.lower().strip()
     normalized_speed = voice_speed.lower().strip()
 
@@ -91,32 +139,40 @@ def summarize_pdf(
             detail="Unsupported voice speed. Choose normal or slow.",
         )
 
-    pdf_path = _save_upload(file)
+    uploaded_path = _save_upload(file)
 
     try:
-        extraction = extract_text_from_pdf(pdf_path)
-        articles = separate_articles_by_paragraph(extraction.text)
-        summary_input = combine_articles_for_summary(articles, extraction.text)
-        crop_error = None
-        try:
-            image_crops = crop_article_images_from_pdf(
-                pdf_path,
-                CROP_DIR / pdf_path.stem,
-            )
-        except ArticleCropError as exc:
-            image_crops = []
-            crop_error = str(exc)
+        image_crops, crop_error = _crop_upload_images(uploaded_path)
+        extracted_text = ""
+        extraction_method = "not_requested"
+        page_count = 1
+        articles = []
+        summary_text = None
+        summary_language = normalized_language
+        summary_model = None
+        chunk_count = 0
+        audio_path = None
 
-        summary = summarize_newspaper(
-            summary_input,
-            target_language=normalized_language,
-        )
-        audio_path = generate_audio_summary(
-            summary.summary_text,
-            output_path=AUDIO_DIR / "summary.mp3",
-            language=normalized_language,
-            speed=normalized_speed,
-        )
+        if generate_summary:
+            extracted_text, extraction_method, page_count = _extract_text_for_upload(
+                uploaded_path
+            )
+            articles = separate_articles_by_paragraph(extracted_text)
+            summary_input = combine_articles_for_summary(articles, extracted_text)
+            summary = summarize_newspaper(
+                summary_input,
+                target_language=normalized_language,
+            )
+            summary_text = summary.summary_text
+            summary_language = summary.language
+            summary_model = summary.model
+            chunk_count = summary.chunk_count
+            audio_path = generate_audio_summary(
+                summary.summary_text,
+                output_path=AUDIO_DIR / "summary.mp3",
+                language=normalized_language,
+                speed=normalized_speed,
+            )
     except PDFExtractionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SummarizationError as exc:
@@ -125,11 +181,11 @@ def summarize_pdf(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return {
-        "message": "PDF processed successfully.",
-        "summary": summary.summary_text,
-        "language": summary.language,
-        "model": summary.model,
-        "chunk_count": summary.chunk_count,
+        "message": "File processed successfully.",
+        "summary": summary_text,
+        "language": summary_language,
+        "model": summary_model,
+        "chunk_count": chunk_count,
         "article_count": len(articles),
         "articles": [article.to_dict() for article in articles],
         "article_image_count": len(image_crops),
@@ -149,11 +205,12 @@ def summarize_pdf(
             for crop in image_crops
         ],
         "crop_error": crop_error,
-        "extraction_method": extraction.method,
-        "page_count": extraction.page_count,
-        "uploaded_pdf": str(pdf_path.relative_to(BASE_DIR)),
-        "audio_file": str(audio_path.relative_to(BASE_DIR)),
-        "audio_url": f"/audio/{audio_path.name}",
+        "extraction_method": extraction_method,
+        "page_count": page_count,
+        "uploaded_file": str(uploaded_path.relative_to(BASE_DIR)),
+        "input_type": "pdf" if _is_pdf(uploaded_path) else "image",
+        "audio_file": str(audio_path.relative_to(BASE_DIR)) if audio_path else None,
+        "audio_url": f"/audio/{audio_path.name}" if audio_path else None,
     }
 
 

@@ -1,17 +1,19 @@
 # AI-powered Gujarati Newspaper Summarizer
 
-This project lets users upload one Gujarati newspaper PDF, extract Gujarati
-text, cut article areas out of the newspaper page images, summarize the
-important news with Gemini, and generate a Gujarati MP3 audio summary with gTTS.
+This project lets users upload one Gujarati newspaper PDF or newspaper image
+(`.jpg`, `.jpeg`, `.png`), extract Gujarati text, cut article areas out of the
+newspaper page images, summarize the important news with Gemini, and generate a
+Gujarati MP3 audio summary with gTTS.
 
 ## Features
 
-- Streamlit frontend with one-PDF upload, progress bar, newspaper image
+- Streamlit frontend with one-file upload, progress bar, newspaper image
   cutouts, separated text sections, summary display, audio player, and MP3
   download.
-- FastAPI backend for API-based PDF processing.
+- FastAPI backend for API-based PDF/image processing.
 - Text extraction with `pdfplumber` first for selectable PDFs.
 - Automatic OCR fallback with `pdf2image` and `PaddleOCR` for scanned PDFs.
+- Direct OCR and visual cutouts for newspaper JPG/PNG image uploads.
 - Gujarati text cleaning to reduce OCR noise and duplicate lines.
 - Newspaper photo/PDF image cutouts saved as PNG files in `article_crops/`.
 - Paragraph-based article separation with article count, title, text, word
@@ -118,7 +120,7 @@ http://127.0.0.1:8000/docs
 ### Backend Endpoints
 
 - `GET /health` - health check
-- `POST /summarize` - upload and process one PDF
+- `POST /summarize` - upload and process one PDF, JPG, JPEG, or PNG
 - `GET /audio/{filename}` - download generated audio
 - `GET /article-crops/{run_id}/{filename}` - download generated image cutouts
 
@@ -128,7 +130,16 @@ Example API request:
 curl -X POST "http://127.0.0.1:8000/summarize" \
   -F "file=@newspaper.pdf" \
   -F "target_language=gujarati" \
-  -F "voice_speed=normal"
+  -F "voice_speed=normal" \
+  -F "generate_summary=true"
+```
+
+Image-only cutout request without Gemini summary/audio:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/summarize" \
+  -F "file=@newspaper.jpg" \
+  -F "generate_summary=false"
 ```
 
 ## Run the Frontend
@@ -145,18 +156,20 @@ http://localhost:8501
 
 ## How It Works
 
-1. The user uploads one PDF from the Streamlit UI or FastAPI endpoint.
+1. The user uploads one PDF, JPG, JPEG, or PNG from the Streamlit UI or FastAPI
+   endpoint.
 2. The file is saved in `uploads/`.
-3. `utils.extractor` validates the PDF and tries `pdfplumber`.
-4. If extracted text is empty or too small, `utils.ocr` converts PDF pages to
-   images with `pdf2image` and runs PaddleOCR with Gujarati language support.
+3. For PDFs, `utils.extractor` validates the file and tries `pdfplumber`.
+4. For scanned PDFs, `utils.ocr` converts PDF pages to images with `pdf2image`
+   and runs PaddleOCR with Gujarati language support. For JPG/PNG files,
+   PaddleOCR runs directly on the uploaded image.
 5. `utils.cleaner` removes noisy characters, duplicate lines, and unnecessary
    spaces while preserving paragraph breaks.
 6. `utils.articles` separates article sections by paragraph and labels each
    section with article number, title, word count, and character count.
-7. `utils.cropper` converts the PDF into page images and cuts article-like
-   visual blocks from the newspaper photo/scanned page. These PNG files are
-   saved in `article_crops/`.
+7. `utils.cropper` converts PDFs into page images or reads uploaded JPG/PNG
+   images directly, then cuts article-like visual blocks from the newspaper
+   photo/scanned page. These PNG files are saved in `article_crops/`.
 8. `utils.summarizer` sends labeled article sections to Gemini, splitting long
    text into chunks when needed.
 9. Gemini returns a simple-language summary, 5 bullet points, and categories.
@@ -166,9 +179,9 @@ http://localhost:8501
 
 ## Newspaper Image Cutouts
 
-The app now creates visual cutouts directly from the newspaper PDF/page photo.
-It converts the PDF pages to images, detects dark content blocks such as article
-text areas and photos, and saves each detected block as a PNG.
+The app creates visual cutouts directly from the newspaper PDF/page photo or
+from an uploaded newspaper JPG/PNG image. It detects dark content blocks such as
+article text areas and photos, then saves each detected block as a PNG.
 
 In Streamlit, these appear under:
 
@@ -177,6 +190,14 @@ Newspaper Article Image Cutouts
 ```
 
 Each cutout can be viewed and downloaded separately.
+
+If you only want cutouts, uncheck this option in Streamlit:
+
+```text
+Generate AI summary and audio
+```
+
+That mode does not require Gemini or gTTS.
 
 The FastAPI `/summarize` response includes:
 
@@ -213,8 +234,9 @@ The FastAPI `/summarize` response includes:
 
 The app handles common failures:
 
-- Invalid or non-PDF uploads
+- Invalid uploads
 - Corrupt PDFs
+- Unsupported image files
 - Empty extracted text
 - OCR initialization or processing failures
 - Missing `GEMINI_API_KEY`

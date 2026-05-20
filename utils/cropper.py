@@ -174,34 +174,16 @@ def _detect_article_boxes(image: Image.Image) -> list[tuple[int, int, int, int]]
     return sorted(scaled_boxes, key=lambda box: (box[1], box[0]))
 
 
-def crop_article_images_from_pdf(
-    pdf_path: str | Path,
+def _save_article_crops_from_pages(
+    pages: list[Image.Image],
     output_dir: str | Path,
     *,
-    dpi: int = DEFAULT_DPI,
     max_crops_per_page: int = DEFAULT_MAX_CROPS_PER_PAGE,
 ) -> list[ArticleImageCrop]:
-    """Convert a newspaper PDF to page images and save article-like cutouts."""
-    pdf = Path(pdf_path)
-    if not pdf.exists():
-        raise ArticleCropError(f"PDF not found: {pdf}")
-
-    try:
-        from pdf2image import convert_from_path
-    except ImportError as exc:
-        raise ArticleCropError(
-            "pdf2image is not installed. Install requirements.txt before cropping."
-        ) from exc
-
     destination = Path(output_dir)
     if destination.exists():
         shutil.rmtree(destination)
     destination.mkdir(parents=True, exist_ok=True)
-
-    try:
-        pages = convert_from_path(str(pdf), dpi=dpi, fmt="png", thread_count=2)
-    except Exception as exc:
-        raise ArticleCropError("Could not convert PDF pages into newspaper images.") from exc
 
     crops: list[ArticleImageCrop] = []
     for page_number, page_image in enumerate(pages, start=1):
@@ -228,3 +210,58 @@ def crop_article_images_from_pdf(
             )
 
     return crops
+
+
+def crop_article_images_from_pdf(
+    pdf_path: str | Path,
+    output_dir: str | Path,
+    *,
+    dpi: int = DEFAULT_DPI,
+    max_crops_per_page: int = DEFAULT_MAX_CROPS_PER_PAGE,
+) -> list[ArticleImageCrop]:
+    """Convert a newspaper PDF to page images and save article-like cutouts."""
+    pdf = Path(pdf_path)
+    if not pdf.exists():
+        raise ArticleCropError(f"PDF not found: {pdf}")
+
+    try:
+        from pdf2image import convert_from_path
+    except ImportError as exc:
+        raise ArticleCropError(
+            "pdf2image is not installed. Install requirements.txt before cropping."
+        ) from exc
+
+    try:
+        pages = convert_from_path(str(pdf), dpi=dpi, fmt="png", thread_count=2)
+    except Exception as exc:
+        raise ArticleCropError("Could not convert PDF pages into newspaper images.") from exc
+
+    return _save_article_crops_from_pages(
+        pages,
+        output_dir,
+        max_crops_per_page=max_crops_per_page,
+    )
+
+
+def crop_article_images_from_image(
+    image_path: str | Path,
+    output_dir: str | Path,
+    *,
+    max_crops_per_page: int = DEFAULT_MAX_CROPS_PER_PAGE,
+) -> list[ArticleImageCrop]:
+    """Save article-like cutouts from a newspaper JPG/PNG image."""
+    image = Path(image_path)
+    if not image.exists():
+        raise ArticleCropError(f"Image not found: {image}")
+
+    try:
+        with Image.open(image) as opened:
+            page = opened.convert("RGB")
+    except Exception as exc:
+        raise ArticleCropError("Could not open the uploaded newspaper image.") from exc
+
+    return _save_article_crops_from_pages(
+        [page],
+        output_dir,
+        max_crops_per_page=max_crops_per_page,
+    )

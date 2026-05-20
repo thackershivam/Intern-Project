@@ -116,3 +116,22 @@ def extract_text_with_ocr(
         raise OCRProcessingError("OCR failed while processing the PDF pages.") from exc
 
     return "\n\n".join(extracted_pages).strip()
+
+
+def extract_text_from_image(
+    image_path: str | Path,
+    *,
+    language: str = DEFAULT_OCR_LANGUAGE,
+) -> str:
+    """Extract Gujarati text directly from a newspaper image file."""
+    image = Path(image_path)
+    if not image.exists():
+        raise OCRProcessingError(f"Image not found: {image}")
+
+    ocr = _load_ocr_model(language)
+    try:
+        result = ocr.ocr(str(image), cls=True)
+    except Exception as exc:
+        raise OCRProcessingError("OCR failed while processing the newspaper image.") from exc
+
+    return _extract_text_from_ocr_result(result).strip()
