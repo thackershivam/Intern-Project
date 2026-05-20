@@ -1,9 +1,0 @@
-streamlit
-paddleocr
-paddlepaddle
-opencv-python
-pillow
-numpy
-gtts
-pdf2image
-python-dotenv
