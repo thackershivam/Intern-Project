@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+python-multipart
+paddleocr
+paddlepaddle
+opencv-python
+Pillow
+numpy
+gTTS
+pdf2image
+python-dotenv
