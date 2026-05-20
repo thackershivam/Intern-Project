@@ -10,3 +10,6 @@ uploads/*
 
 audio/*
 !audio/.gitkeep
+
+article_crops/*
+!article_crops/.gitkeep

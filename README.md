@@ -1,17 +1,19 @@
 # AI-powered Gujarati Newspaper Summarizer
 
 This project lets users upload one Gujarati newspaper PDF, extract Gujarati
-text, separate article sections by paragraph, summarize the important news with
-Gemini, and generate a Gujarati MP3 audio summary with gTTS.
+text, cut article areas out of the newspaper page images, summarize the
+important news with Gemini, and generate a Gujarati MP3 audio summary with gTTS.
 
 ## Features
 
-- Streamlit frontend with one-PDF upload, progress bar, separated article
-  display, summary display, audio player, and MP3 download.
+- Streamlit frontend with one-PDF upload, progress bar, newspaper image
+  cutouts, separated text sections, summary display, audio player, and MP3
+  download.
 - FastAPI backend for API-based PDF processing.
 - Text extraction with `pdfplumber` first for selectable PDFs.
 - Automatic OCR fallback with `pdf2image` and `PaddleOCR` for scanned PDFs.
 - Gujarati text cleaning to reduce OCR noise and duplicate lines.
+- Newspaper photo/PDF image cutouts saved as PNG files in `article_crops/`.
 - Paragraph-based article separation with article count, title, text, word
   count, and character count.
 - Gemini-based chunked summarization for large newspaper PDFs.
@@ -34,9 +36,12 @@ project/
 │   └── .gitkeep
 ├── audio/
 │   └── .gitkeep
+├── article_crops/
+│   └── .gitkeep
 └── utils/
     ├── __init__.py
     ├── articles.py
+    ├── cropper.py
     ├── extractor.py
     ├── ocr.py
     ├── summarizer.py
@@ -115,6 +120,7 @@ http://127.0.0.1:8000/docs
 - `GET /health` - health check
 - `POST /summarize` - upload and process one PDF
 - `GET /audio/{filename}` - download generated audio
+- `GET /article-crops/{run_id}/{filename}` - download generated image cutouts
 
 Example API request:
 
@@ -148,20 +154,50 @@ http://localhost:8501
    spaces while preserving paragraph breaks.
 6. `utils.articles` separates article sections by paragraph and labels each
    section with article number, title, word count, and character count.
-7. `utils.summarizer` sends labeled article sections to Gemini, splitting long
+7. `utils.cropper` converts the PDF into page images and cuts article-like
+   visual blocks from the newspaper photo/scanned page. These PNG files are
+   saved in `article_crops/`.
+8. `utils.summarizer` sends labeled article sections to Gemini, splitting long
    text into chunks when needed.
-8. Gemini returns a simple-language summary, 5 bullet points, and categories.
-9. `utils.tts` converts the final summary into MP3 audio with gTTS.
-10. The generated audio is saved in `audio/summary.mp3` and can be played or
+9. Gemini returns a simple-language summary, 5 bullet points, and categories.
+10. `utils.tts` converts the final summary into MP3 audio with gTTS.
+11. The generated audio is saved in `audio/summary.mp3` and can be played or
    downloaded.
+
+## Newspaper Image Cutouts
+
+The app now creates visual cutouts directly from the newspaper PDF/page photo.
+It converts the PDF pages to images, detects dark content blocks such as article
+text areas and photos, and saves each detected block as a PNG.
+
+In Streamlit, these appear under:
+
+```text
+Newspaper Article Image Cutouts
+```
+
+Each cutout can be viewed and downloaded separately.
+
+The FastAPI `/summarize` response includes:
+
+- `article_image_count`
+- `article_image_crops`
+  - `index`
+  - `page_number`
+  - `image_file`
+  - `image_url`
+  - `bbox`
+  - `width`
+  - `height`
+- `crop_error`
 
 ## Paragraph-Based Article Separation
 
-The app uses paragraph boundaries from the extracted PDF text to create article
-sections. Short paragraphs are treated as possible headlines and attached to the
-next larger paragraph. If OCR or PDF extraction does not preserve blank lines,
-the app falls back to separating visible text lines so users can still inspect
-the PDF content in sections.
+The app still also uses paragraph boundaries from the extracted PDF text to
+create text sections for summarization. Short paragraphs are treated as possible
+headlines and attached to the next larger paragraph. If OCR or PDF extraction
+does not preserve blank lines, the app falls back to separating visible text
+lines so users can still inspect the PDF content in sections.
 
 The FastAPI `/summarize` response includes:
 
@@ -184,14 +220,15 @@ The app handles common failures:
 - Missing `GEMINI_API_KEY`
 - Gemini API errors
 - gTTS audio generation errors
+- PDF-to-image cutout errors
 
 Errors are returned as HTTP errors in FastAPI and displayed as Streamlit
 messages in the frontend.
 
 ## Notes
 
-- `uploads/` and `audio/` are runtime folders. Their generated files are ignored
-  by Git.
+- `uploads/`, `audio/`, and `article_crops/` are runtime folders. Their
+  generated files are ignored by Git.
 - `audio/summary.mp3` is overwritten each time a new summary is generated.
 - PaddleOCR model downloads may happen on the first OCR run.
 - For best OCR results, use clear newspaper scans with readable Gujarati text.

@@ -10,3 +10,4 @@ paddlepaddle
 google-generativeai
 gTTS
 Pillow
+numpy

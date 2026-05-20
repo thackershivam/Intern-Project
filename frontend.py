@@ -9,6 +9,7 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from utils.articles import combine_articles_for_summary, separate_articles_by_paragraph
+from utils.cropper import ArticleCropError, crop_article_images_from_pdf
 from utils.extractor import PDFExtractionError, extract_text_from_pdf
 from utils.summarizer import SummarizationError, summarize_newspaper
 from utils.tts import TTSError, generate_audio_summary
@@ -19,8 +20,10 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 AUDIO_DIR = BASE_DIR / "audio"
+CROP_DIR = BASE_DIR / "article_crops"
 UPLOAD_DIR.mkdir(exist_ok=True)
 AUDIO_DIR.mkdir(exist_ok=True)
+CROP_DIR.mkdir(exist_ok=True)
 
 LANGUAGE_OPTIONS = {
     "Gujarati": "gujarati",
@@ -54,8 +57,8 @@ def main() -> None:
 
     st.title("AI-powered Gujarati Newspaper Summarizer")
     st.write(
-        "Upload one Gujarati newspaper PDF to extract text, separate articles "
-        "by paragraph, summarize key news, and generate an audio summary."
+        "Upload one Gujarati newspaper PDF to extract text, cut article areas "
+        "from the newspaper page images, summarize key news, and generate audio."
     )
 
     uploaded_pdf = st.file_uploader("Upload one Gujarati newspaper PDF", type=["pdf"])
@@ -104,7 +107,19 @@ def main() -> None:
         with st.spinner("Separating articles by paragraph..."):
             articles = separate_articles_by_paragraph(extraction.text)
             summary_input = combine_articles_for_summary(articles, extraction.text)
-            progress.progress(55, text=f"Separated {len(articles)} article sections")
+            progress.progress(50, text=f"Separated {len(articles)} text sections")
+
+        crop_warning = None
+        with st.spinner("Cutting article areas from newspaper photos..."):
+            try:
+                image_crops = crop_article_images_from_pdf(
+                    pdf_path,
+                    CROP_DIR / pdf_path.stem,
+                )
+            except ArticleCropError as exc:
+                image_crops = []
+                crop_warning = str(exc)
+            progress.progress(65, text=f"Created {len(image_crops)} image cutouts")
 
         with st.spinner("Generating AI summary with Gemini..."):
             summary = summarize_newspaper(
@@ -143,10 +158,38 @@ def main() -> None:
         f"Pages: {extraction.page_count or 'Unknown'} | "
         f"Extraction: {extraction.method} | "
         f"Articles: {len(articles)} | "
+        f"Image cutouts: {len(image_crops)} | "
         f"Gemini chunks: {summary.chunk_count}"
     )
 
-    st.subheader("Separated Articles")
+    if crop_warning:
+        st.warning(f"Image cutout warning: {crop_warning}")
+
+    st.subheader("Newspaper Article Image Cutouts")
+    if image_crops:
+        st.write("These are cropped directly from the newspaper page photo/PDF image.")
+        for crop in image_crops:
+            with st.expander(
+                f"Cutout {crop.index} - Page {crop.page_number}",
+                expanded=crop.index == 1,
+            ):
+                st.caption(
+                    f"Size: {crop.width} x {crop.height}px | "
+                    f"Box: {crop.bbox}"
+                )
+                st.image(crop.image_path, use_container_width=True)
+                crop_bytes = Path(crop.image_path).read_bytes()
+                st.download_button(
+                    label=f"Download cutout {crop.index}",
+                    data=crop_bytes,
+                    file_name=Path(crop.image_path).name,
+                    mime="image/png",
+                    key=f"download_crop_{crop.index}",
+                )
+    else:
+        st.info("No image cutouts were created from this PDF.")
+
+    st.subheader("Text Sections")
     if articles:
         for article in articles:
             with st.expander(
