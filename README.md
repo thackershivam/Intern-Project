@@ -1,17 +1,19 @@
 # AI-powered Gujarati Newspaper Summarizer
 
-This project lets users upload a Gujarati newspaper PDF, extract Gujarati text,
-summarize the important news with Gemini, and generate a Gujarati MP3 audio
-summary with gTTS.
+This project lets users upload one Gujarati newspaper PDF, extract Gujarati
+text, separate article sections by paragraph, summarize the important news with
+Gemini, and generate a Gujarati MP3 audio summary with gTTS.
 
 ## Features
 
-- Streamlit frontend with PDF upload, progress bar, summary display, audio
-  player, and MP3 download.
+- Streamlit frontend with one-PDF upload, progress bar, separated article
+  display, summary display, audio player, and MP3 download.
 - FastAPI backend for API-based PDF processing.
 - Text extraction with `pdfplumber` first for selectable PDFs.
 - Automatic OCR fallback with `pdf2image` and `PaddleOCR` for scanned PDFs.
 - Gujarati text cleaning to reduce OCR noise and duplicate lines.
+- Paragraph-based article separation with article count, title, text, word
+  count, and character count.
 - Gemini-based chunked summarization for large newspaper PDFs.
 - Output includes:
   - A short summary
@@ -34,6 +36,7 @@ project/
 │   └── .gitkeep
 └── utils/
     ├── __init__.py
+    ├── articles.py
     ├── extractor.py
     ├── ocr.py
     ├── summarizer.py
@@ -110,7 +113,7 @@ http://127.0.0.1:8000/docs
 ### Backend Endpoints
 
 - `GET /health` - health check
-- `POST /summarize` - upload and process a PDF
+- `POST /summarize` - upload and process one PDF
 - `GET /audio/{filename}` - download generated audio
 
 Example API request:
@@ -136,18 +139,39 @@ http://localhost:8501
 
 ## How It Works
 
-1. The user uploads a PDF from the Streamlit UI or FastAPI endpoint.
+1. The user uploads one PDF from the Streamlit UI or FastAPI endpoint.
 2. The file is saved in `uploads/`.
 3. `utils.extractor` validates the PDF and tries `pdfplumber`.
 4. If extracted text is empty or too small, `utils.ocr` converts PDF pages to
    images with `pdf2image` and runs PaddleOCR with Gujarati language support.
 5. `utils.cleaner` removes noisy characters, duplicate lines, and unnecessary
-   spaces.
-6. `utils.summarizer` splits long text into chunks and sends them to Gemini.
-7. Gemini returns a simple-language summary, 5 bullet points, and categories.
-8. `utils.tts` converts the final summary into MP3 audio with gTTS.
-9. The generated audio is saved in `audio/summary.mp3` and can be played or
+   spaces while preserving paragraph breaks.
+6. `utils.articles` separates article sections by paragraph and labels each
+   section with article number, title, word count, and character count.
+7. `utils.summarizer` sends labeled article sections to Gemini, splitting long
+   text into chunks when needed.
+8. Gemini returns a simple-language summary, 5 bullet points, and categories.
+9. `utils.tts` converts the final summary into MP3 audio with gTTS.
+10. The generated audio is saved in `audio/summary.mp3` and can be played or
    downloaded.
+
+## Paragraph-Based Article Separation
+
+The app uses paragraph boundaries from the extracted PDF text to create article
+sections. Short paragraphs are treated as possible headlines and attached to the
+next larger paragraph. If OCR or PDF extraction does not preserve blank lines,
+the app falls back to separating visible text lines so users can still inspect
+the PDF content in sections.
+
+The FastAPI `/summarize` response includes:
+
+- `article_count`
+- `articles`
+  - `index`
+  - `title`
+  - `text`
+  - `word_count`
+  - `char_count`
 
 ## Error Handling
 

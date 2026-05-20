@@ -8,6 +8,7 @@ from uuid import uuid4
 import streamlit as st
 from dotenv import load_dotenv
 
+from utils.articles import combine_articles_for_summary, separate_articles_by_paragraph
 from utils.extractor import PDFExtractionError, extract_text_from_pdf
 from utils.summarizer import SummarizationError, summarize_newspaper
 from utils.tts import TTSError, generate_audio_summary
@@ -53,11 +54,11 @@ def main() -> None:
 
     st.title("AI-powered Gujarati Newspaper Summarizer")
     st.write(
-        "Upload a Gujarati newspaper PDF to extract text, summarize key news, "
-        "and generate a Gujarati audio summary."
+        "Upload one Gujarati newspaper PDF to extract text, separate articles "
+        "by paragraph, summarize key news, and generate an audio summary."
     )
 
-    uploaded_pdf = st.file_uploader("Upload Gujarati newspaper PDF", type=["pdf"])
+    uploaded_pdf = st.file_uploader("Upload one Gujarati newspaper PDF", type=["pdf"])
 
     col1, col2 = st.columns(2)
     with col1:
@@ -96,13 +97,18 @@ def main() -> None:
         with st.spinner("Extracting Gujarati text..."):
             extraction = extract_text_from_pdf(pdf_path)
             progress.progress(
-                45,
+                40,
                 text=f"Text extracted using {extraction.method}",
             )
 
+        with st.spinner("Separating articles by paragraph..."):
+            articles = separate_articles_by_paragraph(extraction.text)
+            summary_input = combine_articles_for_summary(articles, extraction.text)
+            progress.progress(55, text=f"Separated {len(articles)} article sections")
+
         with st.spinner("Generating AI summary with Gemini..."):
             summary = summarize_newspaper(
-                extraction.text,
+                summary_input,
                 target_language=LANGUAGE_OPTIONS[language_label],
             )
             progress.progress(75, text="Summary generated")
@@ -136,8 +142,23 @@ def main() -> None:
     st.caption(
         f"Pages: {extraction.page_count or 'Unknown'} | "
         f"Extraction: {extraction.method} | "
+        f"Articles: {len(articles)} | "
         f"Gemini chunks: {summary.chunk_count}"
     )
+
+    st.subheader("Separated Articles")
+    if articles:
+        for article in articles:
+            with st.expander(
+                f"Article {article.index}: {article.title}",
+                expanded=article.index == 1,
+            ):
+                st.caption(
+                    f"{article.word_count} words | {article.char_count} characters"
+                )
+                st.write(article.text)
+    else:
+        st.info("No separate article paragraphs were found.")
 
     st.subheader("Extracted Summary")
     st.markdown(summary.summary_text)

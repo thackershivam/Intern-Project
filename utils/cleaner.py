@@ -14,22 +14,39 @@ _OCR_NOISE_RE = re.compile(r"[^\w\s\u0A80-\u0AFF.,;:!?()\-/\"'।॥%₹&+]")
 def normalize_spaces(text: str) -> str:
     """Collapse noisy spacing while preserving meaningful line breaks."""
     normalized_lines: list[str] = []
-    for line in text.splitlines():
+    for line in text.replace("\r\n", "\n").replace("\r", "\n").splitlines():
         line = _WHITESPACE_RE.sub(" ", line).strip()
-        if line:
-            normalized_lines.append(line)
+        if not line:
+            if normalized_lines and normalized_lines[-1] != "":
+                normalized_lines.append("")
+            continue
+        normalized_lines.append(line)
+
+    while normalized_lines and normalized_lines[-1] == "":
+        normalized_lines.pop()
+
     return "\n".join(normalized_lines)
 
 
 def remove_duplicate_lines(text: str) -> str:
     """Remove repeated OCR/header/footer lines while keeping original order."""
     unique_lines: OrderedDict[str, str] = OrderedDict()
+    output_lines: list[str] = []
     for line in text.splitlines():
         normalized_key = _WHITESPACE_RE.sub(" ", line).strip().lower()
         if not normalized_key:
+            if output_lines and output_lines[-1] != "":
+                output_lines.append("")
             continue
-        unique_lines.setdefault(normalized_key, line.strip())
-    return "\n".join(unique_lines.values())
+        if normalized_key in unique_lines:
+            continue
+        unique_lines[normalized_key] = line.strip()
+        output_lines.append(line.strip())
+
+    while output_lines and output_lines[-1] == "":
+        output_lines.pop()
+
+    return "\n".join(output_lines)
 
 
 def clean_ocr_noise(text: str) -> str:

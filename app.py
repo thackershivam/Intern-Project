@@ -11,6 +11,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
+from utils.articles import combine_articles_for_summary, separate_articles_by_paragraph
 from utils.extractor import PDFExtractionError, extract_text_from_pdf
 from utils.summarizer import SummarizationError, summarize_newspaper
 from utils.tts import TTSError, generate_audio_summary
@@ -91,8 +92,10 @@ def summarize_pdf(
 
     try:
         extraction = extract_text_from_pdf(pdf_path)
+        articles = separate_articles_by_paragraph(extraction.text)
+        summary_input = combine_articles_for_summary(articles, extraction.text)
         summary = summarize_newspaper(
-            extraction.text,
+            summary_input,
             target_language=normalized_language,
         )
         audio_path = generate_audio_summary(
@@ -114,6 +117,8 @@ def summarize_pdf(
         "language": summary.language,
         "model": summary.model,
         "chunk_count": summary.chunk_count,
+        "article_count": len(articles),
+        "articles": [article.to_dict() for article in articles],
         "extraction_method": extraction.method,
         "page_count": extraction.page_count,
         "uploaded_pdf": str(pdf_path.relative_to(BASE_DIR)),
